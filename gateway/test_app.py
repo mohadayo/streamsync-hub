@@ -1,6 +1,13 @@
 import json
 import pytest
-from app import app
+from app import app, events_store
+
+
+@pytest.fixture(autouse=True)
+def clear_events():
+    events_store.clear()
+    yield
+    events_store.clear()
 
 
 @pytest.fixture
@@ -58,7 +65,7 @@ def test_list_events(client):
     assert resp.status_code == 200
     data = resp.get_json()
     assert isinstance(data, list)
-    assert len(data) >= 1
+    assert len(data) == 1
 
 
 def test_list_events_filter_by_type(client):
@@ -67,9 +74,15 @@ def test_list_events_filter_by_type(client):
         data=json.dumps({"type": "filter.test"}),
         content_type="application/json",
     )
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "other.type"}),
+        content_type="application/json",
+    )
     resp = client.get("/api/events?type=filter.test")
     assert resp.status_code == 200
     data = resp.get_json()
+    assert len(data) == 1
     for e in data:
         assert e["type"] == "filter.test"
 
@@ -95,6 +108,24 @@ def test_stats(client):
     resp = client.get("/api/stats")
     assert resp.status_code == 200
     data = resp.get_json()
-    assert "total" in data
+    assert data["total"] == 0
     assert "by_status" in data
     assert "by_type" in data
+
+
+def test_stats_with_events(client):
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "stat.test"}),
+        content_type="application/json",
+    )
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "stat.test"}),
+        content_type="application/json",
+    )
+    resp = client.get("/api/stats")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 2
+    assert data["by_type"]["stat.test"] == 2
