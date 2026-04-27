@@ -87,6 +87,17 @@ def get_event(event_id):
     return jsonify({"error": "Event not found"}), 404
 
 
+@app.route("/api/events/<event_id>", methods=["DELETE"])
+def delete_event(event_id):
+    for i, event in enumerate(events_store):
+        if event["id"] == event_id:
+            deleted = events_store.pop(i)
+            logger.info("Event deleted: id=%s type=%s", deleted["id"], deleted["type"])
+            return jsonify({"message": "Event deleted", "event": deleted})
+    logger.warning("Event not found for deletion: %s", event_id)
+    return jsonify({"error": "Event not found"}), 404
+
+
 @app.route("/api/stats", methods=["GET"])
 def stats():
     total = len(events_store)
