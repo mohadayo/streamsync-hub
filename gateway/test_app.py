@@ -104,6 +104,53 @@ def test_get_event_by_id(client):
     assert resp.get_json()["id"] == event_id
 
 
+def test_delete_event_success(client):
+    create_resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": "test.delete"}),
+        content_type="application/json",
+    )
+    event_id = create_resp.get_json()["id"]
+
+    resp = client.delete(f"/api/events/{event_id}")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["message"] == "Event deleted"
+    assert data["event"]["id"] == event_id
+
+    get_resp = client.get(f"/api/events/{event_id}")
+    assert get_resp.status_code == 404
+
+
+def test_delete_event_not_found(client):
+    resp = client.delete("/api/events/nonexistent-id")
+    assert resp.status_code == 404
+    data = resp.get_json()
+    assert "not found" in data["error"].lower()
+
+
+def test_delete_event_updates_stats(client):
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "stat.del"}),
+        content_type="application/json",
+    )
+    create_resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": "stat.del"}),
+        content_type="application/json",
+    )
+    event_id = create_resp.get_json()["id"]
+
+    stats_before = client.get("/api/stats").get_json()
+    assert stats_before["total"] == 2
+
+    client.delete(f"/api/events/{event_id}")
+
+    stats_after = client.get("/api/stats").get_json()
+    assert stats_after["total"] == 1
+
+
 def test_stats(client):
     resp = client.get("/api/stats")
     assert resp.status_code == 200
