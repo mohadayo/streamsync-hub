@@ -20,6 +20,7 @@ PROCESSOR_URL = os.environ.get("PROCESSOR_URL", "http://localhost:8081")
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3000")
 MAX_EVENTS = int(os.environ.get("MAX_EVENTS", "10000"))
 MAX_PAYLOAD_SIZE = int(os.environ.get("MAX_PAYLOAD_SIZE", str(1024 * 1024)))
+DEFAULT_PAGE_LIMIT = int(os.environ.get("DEFAULT_PAGE_LIMIT", "50"))
 
 events_store: list[dict] = []
 
@@ -85,10 +86,27 @@ def create_event():
 @app.route("/api/events", methods=["GET"])
 def list_events():
     event_type = request.args.get("type")
+    limit = request.args.get("limit", DEFAULT_PAGE_LIMIT, type=int)
+    offset = request.args.get("offset", 0, type=int)
+
+    if limit < 0:
+        limit = DEFAULT_PAGE_LIMIT
+    if offset < 0:
+        offset = 0
+
+    filtered = events_store
     if event_type:
         filtered = [e for e in events_store if e["type"] == event_type]
-        return jsonify(filtered)
-    return jsonify(events_store)
+
+    total = len(filtered)
+    paginated = filtered[offset:offset + limit]
+
+    return jsonify({
+        "events": paginated,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    })
 
 
 @app.route("/api/events/<event_id>", methods=["GET"])
