@@ -18,6 +18,8 @@ logger = logging.getLogger("gateway")
 
 PROCESSOR_URL = os.environ.get("PROCESSOR_URL", "http://localhost:8081")
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3000")
+MAX_EVENTS = int(os.environ.get("MAX_EVENTS", "10000"))
+MAX_PAYLOAD_SIZE = int(os.environ.get("MAX_PAYLOAD_SIZE", str(1024 * 1024)))
 
 events_store: list[dict] = []
 
@@ -29,6 +31,11 @@ def health():
 
 @app.route("/api/events", methods=["POST"])
 def create_event():
+    content_length = request.content_length or 0
+    if content_length > MAX_PAYLOAD_SIZE:
+        logger.warning("Payload too large: %d bytes (max %d)", content_length, MAX_PAYLOAD_SIZE)
+        return jsonify({"error": "Payload too large", "max_bytes": MAX_PAYLOAD_SIZE}), 413
+
     data = request.get_json()
     if not data:
         logger.warning("Received empty event payload")
@@ -46,6 +53,12 @@ def create_event():
         "status": "received",
     }
     events_store.append(event)
+
+    if len(events_store) > MAX_EVENTS:
+        removed = len(events_store) - MAX_EVENTS
+        del events_store[:removed]
+        logger.info("Evicted %d old events (store capped at %d)", removed, MAX_EVENTS)
+
     logger.info("Event created: id=%s type=%s", event["id"], event["type"])
 
     try:

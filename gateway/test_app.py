@@ -176,3 +176,43 @@ def test_stats_with_events(client):
     data = resp.get_json()
     assert data["total"] == 2
     assert data["by_type"]["stat.test"] == 2
+
+
+def test_events_store_max_capacity(client, monkeypatch):
+    monkeypatch.setattr("app.MAX_EVENTS", 3)
+    for i in range(5):
+        client.post(
+            "/api/events",
+            data=json.dumps({"type": f"cap.test.{i}"}),
+            content_type="application/json",
+        )
+    resp = client.get("/api/events")
+    data = resp.get_json()
+    assert len(data) == 3
+    types = [e["type"] for e in data]
+    assert "cap.test.0" not in types
+    assert "cap.test.1" not in types
+    assert "cap.test.4" in types
+
+
+def test_payload_too_large(client, monkeypatch):
+    monkeypatch.setattr("app.MAX_PAYLOAD_SIZE", 50)
+    large_payload = json.dumps({"type": "test", "payload": {"data": "x" * 100}})
+    resp = client.post(
+        "/api/events",
+        data=large_payload,
+        content_type="application/json",
+    )
+    assert resp.status_code == 413
+    data = resp.get_json()
+    assert "too large" in data["error"].lower()
+
+
+def test_payload_within_limit(client, monkeypatch):
+    monkeypatch.setattr("app.MAX_PAYLOAD_SIZE", 10000)
+    resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": "small.event"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 201
