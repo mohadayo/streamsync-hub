@@ -64,8 +64,10 @@ def test_list_events(client):
     resp = client.get("/api/events")
     assert resp.status_code == 200
     data = resp.get_json()
-    assert isinstance(data, list)
-    assert len(data) == 1
+    assert "events" in data
+    assert "total" in data
+    assert data["total"] == 1
+    assert len(data["events"]) == 1
 
 
 def test_list_events_filter_by_type(client):
@@ -82,9 +84,101 @@ def test_list_events_filter_by_type(client):
     resp = client.get("/api/events?type=filter.test")
     assert resp.status_code == 200
     data = resp.get_json()
-    assert len(data) == 1
-    for e in data:
+    assert data["total"] == 1
+    assert len(data["events"]) == 1
+    for e in data["events"]:
         assert e["type"] == "filter.test"
+
+
+def test_list_events_pagination_limit(client):
+    for i in range(5):
+        client.post(
+            "/api/events",
+            data=json.dumps({"type": f"page.test.{i}"}),
+            content_type="application/json",
+        )
+    resp = client.get("/api/events?limit=2")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 5
+    assert len(data["events"]) == 2
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+
+
+def test_list_events_pagination_offset(client):
+    for i in range(5):
+        client.post(
+            "/api/events",
+            data=json.dumps({"type": f"page.test.{i}"}),
+            content_type="application/json",
+        )
+    resp = client.get("/api/events?limit=2&offset=3")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 5
+    assert len(data["events"]) == 2
+    assert data["offset"] == 3
+    assert data["events"][0]["type"] == "page.test.3"
+    assert data["events"][1]["type"] == "page.test.4"
+
+
+def test_list_events_pagination_offset_beyond(client):
+    for i in range(3):
+        client.post(
+            "/api/events",
+            data=json.dumps({"type": f"page.test.{i}"}),
+            content_type="application/json",
+        )
+    resp = client.get("/api/events?limit=10&offset=10")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 3
+    assert len(data["events"]) == 0
+
+
+def test_list_events_pagination_with_filter(client):
+    for i in range(4):
+        client.post(
+            "/api/events",
+            data=json.dumps({"type": "target"}),
+            content_type="application/json",
+        )
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "other"}),
+        content_type="application/json",
+    )
+    resp = client.get("/api/events?type=target&limit=2&offset=1")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 4
+    assert len(data["events"]) == 2
+
+
+def test_list_events_negative_limit(client):
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "neg.test"}),
+        content_type="application/json",
+    )
+    resp = client.get("/api/events?limit=-1")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 1
+    assert len(data["events"]) == 1
+
+
+def test_list_events_negative_offset(client):
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "neg.test"}),
+        content_type="application/json",
+    )
+    resp = client.get("/api/events?offset=-5")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["offset"] == 0
 
 
 def test_get_event_not_found(client):
@@ -188,8 +282,8 @@ def test_events_store_max_capacity(client, monkeypatch):
         )
     resp = client.get("/api/events")
     data = resp.get_json()
-    assert len(data) == 3
-    types = [e["type"] for e in data]
+    assert data["total"] == 3
+    types = [e["type"] for e in data["events"]]
     assert "cap.test.0" not in types
     assert "cap.test.1" not in types
     assert "cap.test.4" in types
