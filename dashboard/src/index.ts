@@ -53,11 +53,14 @@ app.get("/api/dashboard", async (_req: Request, res: Response) => {
 
 app.get("/api/events", async (req: Request, res: Response) => {
   try {
-    const params = req.query.type ? `?type=${req.query.type}` : "";
-    const resp = await axios.get(`${GATEWAY_URL}/api/events${params}`, {
-      timeout: 5000,
-    });
-    log("info", `Fetched ${resp.data.length} events from gateway`);
+    const params = new URLSearchParams();
+    if (req.query.type) params.set("type", String(req.query.type));
+    if (req.query.limit) params.set("limit", String(req.query.limit));
+    if (req.query.offset) params.set("offset", String(req.query.offset));
+    const qs = params.toString();
+    const url = qs ? `${GATEWAY_URL}/api/events?${qs}` : `${GATEWAY_URL}/api/events`;
+    const resp = await axios.get(url, { timeout: 5000 });
+    log("info", `Fetched events from gateway (total: ${resp.data.total})`);
     res.json(resp.data);
   } catch (err) {
     log("error", `Failed to fetch events: ${err}`);
@@ -71,7 +74,7 @@ app.get("/api/timeline", async (_req: Request, res: Response) => {
       timeout: 5000,
     });
     const events: Array<{ timestamp: number; type: string; status: string }> =
-      resp.data;
+      resp.data.events;
 
     const buckets: Record<string, number> = {};
     for (const event of events) {
