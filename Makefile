@@ -4,7 +4,7 @@ test: test-python test-go test-ts
 	@echo "All tests passed!"
 
 test-python:
-	cd gateway && pip install -r requirements.txt -q && pytest -v
+	cd gateway && pip install -r requirements-dev.txt -q && pytest -v
 
 test-go:
 	cd processor && go test -v ./...
@@ -16,7 +16,7 @@ lint: lint-python lint-go lint-ts
 	@echo "All lints passed!"
 
 lint-python:
-	cd gateway && flake8 --max-line-length=120 --exclude=__pycache__ .
+	cd gateway && pip install -r requirements-dev.txt -q && flake8 --max-line-length=120 --exclude=__pycache__ .
 
 lint-go:
 	cd processor && go vet ./...

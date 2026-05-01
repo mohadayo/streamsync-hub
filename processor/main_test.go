@@ -8,6 +8,12 @@ import (
 	"testing"
 )
 
+func resetProcessedEvents() {
+	mu.Lock()
+	processedEvents = nil
+	mu.Unlock()
+}
+
 func TestHealthHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
@@ -29,6 +35,8 @@ func TestHealthHandler(t *testing.T) {
 }
 
 func TestProcessHandler_Success(t *testing.T) {
+	resetProcessedEvents()
+
 	event := Event{
 		ID:      "test-123",
 		Type:    "user.signup",
@@ -55,6 +63,8 @@ func TestProcessHandler_Success(t *testing.T) {
 }
 
 func TestProcessHandler_HighPriority(t *testing.T) {
+	resetProcessedEvents()
+
 	event := Event{ID: "err-1", Type: "system.error"}
 	body, _ := json.Marshal(event)
 	req := httptest.NewRequest(http.MethodPost, "/process", bytes.NewReader(body))
@@ -70,6 +80,8 @@ func TestProcessHandler_HighPriority(t *testing.T) {
 }
 
 func TestProcessHandler_LowPriority(t *testing.T) {
+	resetProcessedEvents()
+
 	event := Event{ID: "info-1", Type: "system.info"}
 	body, _ := json.Marshal(event)
 	req := httptest.NewRequest(http.MethodPost, "/process", bytes.NewReader(body))
@@ -156,6 +168,8 @@ func TestClassifyPriority(t *testing.T) {
 }
 
 func TestStatsHandler(t *testing.T) {
+	resetProcessedEvents()
+
 	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
 	w := httptest.NewRecorder()
 	statsHandler(w, req)
@@ -167,7 +181,7 @@ func TestStatsHandler(t *testing.T) {
 	var stats Stats
 	json.NewDecoder(w.Body).Decode(&stats)
 
-	if stats.TotalProcessed < 0 {
-		t.Fatal("total_processed should be >= 0")
+	if stats.TotalProcessed != 0 {
+		t.Fatalf("expected 0 total_processed after reset, got %d", stats.TotalProcessed)
 	}
 }
