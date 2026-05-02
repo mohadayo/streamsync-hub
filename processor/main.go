@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,10 +38,17 @@ var (
 	processedEvents []ProcessResult
 	mu              sync.Mutex
 	logger          *log.Logger
+	maxProcessed    int
 )
 
 func init() {
 	logger = log.New(os.Stdout, "[processor] ", log.LstdFlags)
+	maxProcessed = 10000
+	if v := os.Getenv("PROCESSOR_MAX_EVENTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxProcessed = n
+		}
+	}
 }
 
 func classifyPriority(eventType string) string {
@@ -101,6 +109,11 @@ func processHandler(w http.ResponseWriter, r *http.Request) {
 
 	mu.Lock()
 	processedEvents = append(processedEvents, result)
+	if len(processedEvents) > maxProcessed {
+		removed := len(processedEvents) - maxProcessed
+		processedEvents = processedEvents[removed:]
+		logger.Printf("Evicted %d old events (store capped at %d)", removed, maxProcessed)
+	}
 	mu.Unlock()
 
 	logger.Printf("Processed event: id=%s type=%s priority=%s", event.ID, event.Type, result.Priority)
