@@ -3,7 +3,7 @@ import logging
 import time
 import uuid
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import requests
 
@@ -23,6 +23,27 @@ MAX_PAYLOAD_SIZE = int(os.environ.get("MAX_PAYLOAD_SIZE", str(1024 * 1024)))
 DEFAULT_PAGE_LIMIT = int(os.environ.get("DEFAULT_PAGE_LIMIT", "50"))
 
 events_store: list[dict] = []
+
+
+@app.before_request
+def assign_request_id():
+    incoming = request.headers.get("X-Request-ID", "")
+    if incoming:
+        g.request_id = incoming
+    else:
+        g.request_id = str(uuid.uuid4())
+    logger.info(
+        "request_id=%s method=%s path=%s",
+        g.request_id,
+        request.method,
+        request.path,
+    )
+
+
+@app.after_request
+def add_request_id_header(response):
+    response.headers["X-Request-ID"] = g.get("request_id", "")
+    return response
 
 
 @app.route("/health", methods=["GET"])
