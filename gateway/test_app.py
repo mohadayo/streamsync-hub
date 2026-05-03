@@ -1,4 +1,5 @@
 import json
+import uuid
 import pytest
 from app import app, events_store
 
@@ -310,3 +311,32 @@ def test_payload_within_limit(client, monkeypatch):
         content_type="application/json",
     )
     assert resp.status_code == 201
+
+
+def test_request_id_generated(client):
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    request_id = resp.headers.get("X-Request-ID")
+    assert request_id is not None
+    uuid.UUID(request_id)
+
+
+def test_request_id_forwarded(client):
+    custom_id = "custom-trace-id-12345"
+    resp = client.get("/health", headers={"X-Request-ID": custom_id})
+    assert resp.status_code == 200
+    assert resp.headers.get("X-Request-ID") == custom_id
+
+
+def test_request_id_unique_per_request(client):
+    resp1 = client.get("/health")
+    resp2 = client.get("/health")
+    id1 = resp1.headers.get("X-Request-ID")
+    id2 = resp2.headers.get("X-Request-ID")
+    assert id1 != id2
+
+
+def test_request_id_on_error_response(client):
+    resp = client.get("/api/events/nonexistent-id")
+    assert resp.status_code == 404
+    assert resp.headers.get("X-Request-ID") is not None
