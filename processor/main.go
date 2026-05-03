@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -39,6 +42,7 @@ var (
 	mu              sync.Mutex
 	logger          *log.Logger
 	maxProcessed    int
+	shutdownTimeout time.Duration
 )
 
 func init() {
@@ -47,6 +51,12 @@ func init() {
 	if v := os.Getenv("PROCESSOR_MAX_EVENTS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			maxProcessed = n
+		}
+	}
+	shutdownTimeout = 30 * time.Second
+	if v := os.Getenv("SHUTDOWN_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			shutdownTimeout = time.Duration(n) * time.Second
 		}
 	}
 }
@@ -163,8 +173,30 @@ func main() {
 	mux.HandleFunc("/stats", statsHandler)
 	mux.HandleFunc("/processed", processedHandler)
 
-	logger.Printf("Starting processor on port %s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		logger.Fatalf("Server failed: %v", err)
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		logger.Printf("Starting processor on port %s", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	stop()
+	logger.Println("Shutting down gracefully...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Fatalf("Forced shutdown: %v", err)
+	}
+	logger.Println("Server stopped")
 }
