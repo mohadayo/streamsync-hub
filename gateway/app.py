@@ -20,6 +20,7 @@ PROCESSOR_URL = os.environ.get("PROCESSOR_URL", "http://localhost:8081")
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3000")
 MAX_EVENTS = int(os.environ.get("MAX_EVENTS", "10000"))
 MAX_PAYLOAD_SIZE = int(os.environ.get("MAX_PAYLOAD_SIZE", str(1024 * 1024)))
+MAX_TYPE_LENGTH = int(os.environ.get("MAX_TYPE_LENGTH", "256"))
 DEFAULT_PAGE_LIMIT = int(os.environ.get("DEFAULT_PAGE_LIMIT", "50"))
 
 events_store: list[dict] = []
@@ -66,6 +67,14 @@ def create_event():
     if "type" not in data:
         logger.warning("Event missing 'type' field")
         return jsonify({"error": "Field 'type' is required"}), 400
+
+    if not isinstance(data["type"], str) or not data["type"].strip():
+        logger.warning("Event 'type' field is empty or not a string")
+        return jsonify({"error": "Field 'type' must be a non-empty string"}), 400
+
+    if len(data["type"]) > MAX_TYPE_LENGTH:
+        logger.warning("Event 'type' too long: %d chars (max %d)", len(data["type"]), MAX_TYPE_LENGTH)
+        return jsonify({"error": "Field 'type' exceeds maximum length", "max_length": MAX_TYPE_LENGTH}), 400
 
     event = {
         "id": str(uuid.uuid4()),
