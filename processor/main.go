@@ -38,12 +38,25 @@ type Stats struct {
 }
 
 var (
-	processedEvents []ProcessResult
-	mu              sync.Mutex
-	logger          *log.Logger
-	maxProcessed    int
-	shutdownTimeout time.Duration
+	processedEvents   []ProcessResult
+	mu                sync.Mutex
+	logger            *log.Logger
+	maxProcessed      int
+	shutdownTimeout   time.Duration
+	readHeaderTimeout time.Duration
+	readTimeout       time.Duration
+	writeTimeout      time.Duration
+	idleTimeout       time.Duration
 )
+
+func envSeconds(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return fallback
+}
 
 func init() {
 	logger = log.New(os.Stdout, "[processor] ", log.LstdFlags)
@@ -53,12 +66,22 @@ func init() {
 			maxProcessed = n
 		}
 	}
-	shutdownTimeout = 30 * time.Second
-	if v := os.Getenv("SHUTDOWN_TIMEOUT_SECONDS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			shutdownTimeout = time.Duration(n) * time.Second
+	shutdownTimeout = envSeconds("SHUTDOWN_TIMEOUT_SECONDS", 30*time.Second)
+	readHeaderTimeout = envSeconds("PROCESSOR_READ_HEADER_TIMEOUT", 5*time.Second)
+	readTimeout = envSeconds("PROCESSOR_READ_TIMEOUT", 15*time.Second)
+	writeTimeout = envSeconds("PROCESSOR_WRITE_TIMEOUT", 15*time.Second)
+	idleTimeout = envSeconds("PROCESSOR_IDLE_TIMEOUT", 60*time.Second)
+}
+
+func methodAllowed(w http.ResponseWriter, r *http.Request, allowed ...string) bool {
+	for _, m := range allowed {
+		if r.Method == m {
+			return true
 		}
 	}
+	w.Header().Set("Allow", strings.Join(allowed, ", "))
+	http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	return false
 }
 
 func classifyPriority(eventType string) string {
@@ -82,6 +105,9 @@ func generateTags(event Event) []string {
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
+	if !methodAllowed(w, r, http.MethodGet, http.MethodHead) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "healthy",
@@ -91,8 +117,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func processHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	if !methodAllowed(w, r, http.MethodPost) {
 		return
 	}
 
@@ -133,6 +158,10 @@ func processHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func statsHandler(w http.ResponseWriter, r *http.Request) {
+	if !methodAllowed(w, r, http.MethodGet, http.MethodHead) {
+		return
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -154,6 +183,10 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func processedHandler(w http.ResponseWriter, r *http.Request) {
+	if !methodAllowed(w, r, http.MethodGet, http.MethodHead) {
+		return
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -174,8 +207,12 @@ func main() {
 	mux.HandleFunc("/processed", processedHandler)
 
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: mux,
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
