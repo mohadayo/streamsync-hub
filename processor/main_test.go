@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+	"time"
 )
 
 func resetProcessedEvents() {
@@ -284,5 +286,61 @@ func TestProcessedEvents_MaxCapacity(t *testing.T) {
 	}
 	if results[2].EventID != "cap-4" {
 		t.Errorf("expected newest to be cap-4, got %s", results[2].EventID)
+	}
+}
+
+func TestStatsHandler_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/stats", nil)
+	w := httptest.NewRecorder()
+	statsHandler(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", w.Code)
+	}
+	if allow := w.Header().Get("Allow"); allow == "" {
+		t.Errorf("expected Allow header to be set, got empty")
+	}
+}
+
+func TestProcessedHandler_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodDelete, "/processed", nil)
+	w := httptest.NewRecorder()
+	processedHandler(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHealthHandler_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut, "/health", nil)
+	w := httptest.NewRecorder()
+	healthHandler(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestEnvSeconds_OverrideAndFallback(t *testing.T) {
+	const key = "TEST_PROCESSOR_ENV_SECONDS"
+	os.Unsetenv(key)
+	if got := envSeconds(key, 7*time.Second); got != 7*time.Second {
+		t.Fatalf("expected fallback 7s, got %v", got)
+	}
+
+	t.Setenv(key, "42")
+	if got := envSeconds(key, 7*time.Second); got != 42*time.Second {
+		t.Fatalf("expected override 42s, got %v", got)
+	}
+
+	t.Setenv(key, "not-a-number")
+	if got := envSeconds(key, 7*time.Second); got != 7*time.Second {
+		t.Fatalf("expected fallback for invalid value, got %v", got)
+	}
+
+	t.Setenv(key, "0")
+	if got := envSeconds(key, 7*time.Second); got != 7*time.Second {
+		t.Fatalf("expected fallback for zero value, got %v", got)
 	}
 }
