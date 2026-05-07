@@ -120,7 +120,31 @@ Response:
 | GET | `/health` | Health check |
 | POST | `/process` | Process an event |
 | GET | `/stats` | Processing statistics |
-| GET | `/processed` | List processed events |
+| GET | `/processed` | List processed events (supports `?limit=`, `?offset=`, `?priority=high\|medium\|low`) |
+
+#### List processed events
+
+```bash
+# Default (first PROCESSED_DEFAULT_LIMIT events)
+curl http://localhost:8081/processed
+
+# Pagination
+curl "http://localhost:8081/processed?limit=10&offset=20"
+
+# Priority filter
+curl "http://localhost:8081/processed?priority=high"
+```
+
+Response:
+
+```json
+{
+  "results": [{"event_id": "...", "priority": "high", "tags": ["..."], "summary": "..."}],
+  "total": 42,
+  "limit": 10,
+  "offset": 20
+}
+```
 
 ### Dashboard (port 3000)
 
@@ -143,6 +167,8 @@ All services are configured via environment variables. See [`.env.example`](.env
 | `PROCESSOR_URL` | `http://localhost:8081` | Processor URL (used by gateway) |
 | `GATEWAY_URL` | `http://localhost:8080` | Gateway URL (used by dashboard) |
 | `LOG_LEVEL` | `INFO` | Log verbosity (DEBUG, INFO, WARNING, ERROR) |
+| `PROCESSOR_MAX_EVENTS` | `10000` | Max processed events kept in memory (processor) |
+| `PROCESSED_DEFAULT_LIMIT` | `50` | Default `limit` for `GET /processed` (processor) |
 
 ## Testing
 

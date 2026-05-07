@@ -38,16 +38,19 @@ type Stats struct {
 }
 
 var (
-	processedEvents   []ProcessResult
-	mu                sync.Mutex
-	logger            *log.Logger
-	maxProcessed      int
-	shutdownTimeout   time.Duration
-	readHeaderTimeout time.Duration
-	readTimeout       time.Duration
-	writeTimeout      time.Duration
-	idleTimeout       time.Duration
+	processedEvents       []ProcessResult
+	mu                    sync.Mutex
+	logger                *log.Logger
+	maxProcessed          int
+	processedDefaultLimit int
+	shutdownTimeout       time.Duration
+	readHeaderTimeout     time.Duration
+	readTimeout           time.Duration
+	writeTimeout          time.Duration
+	idleTimeout           time.Duration
 )
+
+var allowedPriorities = map[string]bool{"high": true, "medium": true, "low": true}
 
 func envSeconds(key string, fallback time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
@@ -64,6 +67,12 @@ func init() {
 	if v := os.Getenv("PROCESSOR_MAX_EVENTS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			maxProcessed = n
+		}
+	}
+	processedDefaultLimit = 50
+	if v := os.Getenv("PROCESSED_DEFAULT_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			processedDefaultLimit = n
 		}
 	}
 	shutdownTimeout = envSeconds("SHUTDOWN_TIMEOUT_SECONDS", 30*time.Second)
@@ -182,16 +191,73 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats)
 }
 
+func parsePositiveIntQuery(r *http.Request, key string, fallback int) int {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return fallback
+	}
+	return n
+}
+
+type processedResponse struct {
+	Results []ProcessResult `json:"results"`
+	Total   int             `json:"total"`
+	Limit   int             `json:"limit"`
+	Offset  int             `json:"offset"`
+}
+
 func processedHandler(w http.ResponseWriter, r *http.Request) {
 	if !methodAllowed(w, r, http.MethodGet, http.MethodHead) {
+		return
+	}
+
+	limit := parsePositiveIntQuery(r, "limit", processedDefaultLimit)
+	offset := parsePositiveIntQuery(r, "offset", 0)
+	priority := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("priority")))
+	if priority != "" && !allowedPriorities[priority] {
+		http.Error(w, `{"error":"priority must be one of: high, medium, low"}`, http.StatusBadRequest)
 		return
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 
+	filtered := processedEvents
+	if priority != "" {
+		filtered = make([]ProcessResult, 0, len(processedEvents))
+		for _, e := range processedEvents {
+			if e.Priority == priority {
+				filtered = append(filtered, e)
+			}
+		}
+	}
+
+	total := len(filtered)
+	start := offset
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+
+	results := filtered[start:end]
+	if results == nil {
+		results = []ProcessResult{}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(processedEvents)
+	json.NewEncoder(w).Encode(processedResponse{
+		Results: results,
+		Total:   total,
+		Limit:   limit,
+		Offset:  offset,
+	})
 }
 
 func main() {
