@@ -246,14 +246,25 @@ func TestProcessedHandler(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	var results []ProcessResult
-	json.NewDecoder(w.Body).Decode(&results)
-
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
+	var resp processedResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode failed: %v", err)
 	}
-	if results[0].EventID != "ph-1" {
-		t.Errorf("expected event_id ph-1, got %s", results[0].EventID)
+
+	if resp.Total != 1 {
+		t.Fatalf("expected total 1, got %d", resp.Total)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+	if resp.Results[0].EventID != "ph-1" {
+		t.Errorf("expected event_id ph-1, got %s", resp.Results[0].EventID)
+	}
+	if resp.Limit != processedDefaultLimit {
+		t.Errorf("expected limit %d, got %d", processedDefaultLimit, resp.Limit)
+	}
+	if resp.Offset != 0 {
+		t.Errorf("expected offset 0, got %d", resp.Offset)
 	}
 }
 
@@ -275,17 +286,148 @@ func TestProcessedEvents_MaxCapacity(t *testing.T) {
 	w := httptest.NewRecorder()
 	processedHandler(w, req)
 
-	var results []ProcessResult
-	json.NewDecoder(w.Body).Decode(&results)
+	var resp processedResponse
+	json.NewDecoder(w.Body).Decode(&resp)
 
-	if len(results) != 3 {
-		t.Fatalf("expected 3 results (capped), got %d", len(results))
+	if resp.Total != 3 {
+		t.Fatalf("expected total 3 (capped), got %d", resp.Total)
 	}
-	if results[0].EventID != "cap-2" {
-		t.Errorf("expected oldest remaining to be cap-2, got %s", results[0].EventID)
+	if len(resp.Results) != 3 {
+		t.Fatalf("expected 3 results (capped), got %d", len(resp.Results))
 	}
-	if results[2].EventID != "cap-4" {
-		t.Errorf("expected newest to be cap-4, got %s", results[2].EventID)
+	if resp.Results[0].EventID != "cap-2" {
+		t.Errorf("expected oldest remaining to be cap-2, got %s", resp.Results[0].EventID)
+	}
+	if resp.Results[2].EventID != "cap-4" {
+		t.Errorf("expected newest to be cap-4, got %s", resp.Results[2].EventID)
+	}
+}
+
+func TestProcessedHandler_Pagination(t *testing.T) {
+	resetProcessedEvents()
+
+	for i := 0; i < 5; i++ {
+		event := Event{ID: fmt.Sprintf("p-%d", i), Type: "test.event"}
+		body, _ := json.Marshal(event)
+		req := httptest.NewRequest(http.MethodPost, "/process", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		processHandler(w, req)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/processed?limit=2&offset=1", nil)
+	w := httptest.NewRecorder()
+	processedHandler(w, req)
+
+	var resp processedResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if resp.Total != 5 {
+		t.Errorf("expected total 5, got %d", resp.Total)
+	}
+	if resp.Limit != 2 {
+		t.Errorf("expected limit 2, got %d", resp.Limit)
+	}
+	if resp.Offset != 1 {
+		t.Errorf("expected offset 1, got %d", resp.Offset)
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(resp.Results))
+	}
+	if resp.Results[0].EventID != "p-1" || resp.Results[1].EventID != "p-2" {
+		t.Errorf("unexpected slice: %s, %s", resp.Results[0].EventID, resp.Results[1].EventID)
+	}
+}
+
+func TestProcessedHandler_OffsetBeyondTotal(t *testing.T) {
+	resetProcessedEvents()
+
+	event := Event{ID: "only", Type: "test.event"}
+	body, _ := json.Marshal(event)
+	req := httptest.NewRequest(http.MethodPost, "/process", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	processHandler(w, req)
+
+	req = httptest.NewRequest(http.MethodGet, "/processed?offset=999", nil)
+	w = httptest.NewRecorder()
+	processedHandler(w, req)
+
+	var resp processedResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if resp.Total != 1 {
+		t.Errorf("expected total 1, got %d", resp.Total)
+	}
+	if len(resp.Results) != 0 {
+		t.Errorf("expected empty slice, got %d", len(resp.Results))
+	}
+}
+
+func TestProcessedHandler_PriorityFilter(t *testing.T) {
+	resetProcessedEvents()
+
+	events := []Event{
+		{ID: "e1", Type: "system.error"},
+		{ID: "e2", Type: "user.signup"},
+		{ID: "e3", Type: "system.alert"},
+		{ID: "e4", Type: "page.view"},
+	}
+	for _, event := range events {
+		body, _ := json.Marshal(event)
+		req := httptest.NewRequest(http.MethodPost, "/process", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		processHandler(w, req)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/processed?priority=high", nil)
+	w := httptest.NewRecorder()
+	processedHandler(w, req)
+
+	var resp processedResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if resp.Total != 2 {
+		t.Errorf("expected total 2 high priority events, got %d", resp.Total)
+	}
+	for _, r := range resp.Results {
+		if r.Priority != "high" {
+			t.Errorf("expected only high priority, got %s", r.Priority)
+		}
+	}
+}
+
+func TestProcessedHandler_InvalidPriority(t *testing.T) {
+	resetProcessedEvents()
+
+	req := httptest.NewRequest(http.MethodGet, "/processed?priority=critical", nil)
+	w := httptest.NewRecorder()
+	processedHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid priority, got %d", w.Code)
+	}
+}
+
+func TestProcessedHandler_InvalidLimitFallsBack(t *testing.T) {
+	resetProcessedEvents()
+
+	event := Event{ID: "x", Type: "t"}
+	body, _ := json.Marshal(event)
+	req := httptest.NewRequest(http.MethodPost, "/process", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	processHandler(w, req)
+
+	req = httptest.NewRequest(http.MethodGet, "/processed?limit=-5&offset=abc", nil)
+	w = httptest.NewRecorder()
+	processedHandler(w, req)
+
+	var resp processedResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if resp.Limit != processedDefaultLimit {
+		t.Errorf("expected fallback limit %d, got %d", processedDefaultLimit, resp.Limit)
+	}
+	if resp.Offset != 0 {
+		t.Errorf("expected fallback offset 0, got %d", resp.Offset)
 	}
 }
 
