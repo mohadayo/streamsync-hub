@@ -55,6 +55,7 @@ app.get("/api/events", async (req: Request, res: Response) => {
   try {
     const params = new URLSearchParams();
     if (req.query.type) params.set("type", String(req.query.type));
+    if (req.query.status) params.set("status", String(req.query.status));
     if (req.query.limit) params.set("limit", String(req.query.limit));
     if (req.query.offset) params.set("offset", String(req.query.offset));
     const qs = params.toString();

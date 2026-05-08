@@ -182,6 +182,63 @@ def test_list_events_negative_offset(client):
     assert data["offset"] == 0
 
 
+def test_list_events_filter_by_status(client):
+    create_resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": "status.test"}),
+        content_type="application/json",
+    )
+    assert create_resp.status_code == 201
+    created_status = create_resp.get_json()["status"]
+
+    resp = client.get(f"/api/events?status={created_status}")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] >= 1
+    for e in data["events"]:
+        assert e["status"] == created_status
+
+
+def test_list_events_filter_by_status_no_match(client):
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "status.nomatch"}),
+        content_type="application/json",
+    )
+    resp = client.get("/api/events?status=received")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    for e in data["events"]:
+        assert e["status"] == "received"
+
+
+def test_list_events_invalid_status(client):
+    resp = client.get("/api/events?status=bogus")
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "allowed" in data
+    assert "received" in data["allowed"]
+
+
+def test_list_events_status_combined_with_type(client):
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "alpha"}),
+        content_type="application/json",
+    )
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "beta"}),
+        content_type="application/json",
+    )
+    resp = client.get("/api/events?type=alpha&status=process_error")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    for e in data["events"]:
+        assert e["type"] == "alpha"
+        assert e["status"] == "process_error"
+
+
 def test_get_event_not_found(client):
     resp = client.get("/api/events/nonexistent-id")
     assert resp.status_code == 404

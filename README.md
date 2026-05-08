@@ -83,7 +83,7 @@ npm start
 |--------|----------|-------------|
 | GET | `/health` | Health check |
 | POST | `/api/events` | Create a new event |
-| GET | `/api/events` | List events (optional `?type=` filter) |
+| GET | `/api/events` | List events (optional `?type=`, `?status=`, `?limit=`, `?offset=` filters) |
 | GET | `/api/events/:id` | Get event by ID |
 | GET | `/api/stats` | Get aggregated statistics |
 
@@ -111,6 +111,19 @@ Response:
     "summary": "Processed event 'user.signup' with priority 'medium'"
   }
 }
+```
+
+#### List events with filters
+
+```bash
+# Filter by event type
+curl "http://localhost:8080/api/events?type=user.signup"
+
+# Filter by processing status (received | processed | process_failed | process_error)
+curl "http://localhost:8080/api/events?status=process_failed"
+
+# Combine type + status filters
+curl "http://localhost:8080/api/events?type=user.signup&status=processed"
 ```
 
 ### Processor (port 8081)
