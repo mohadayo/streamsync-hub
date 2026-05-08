@@ -84,6 +84,19 @@ describe("Dashboard Service", () => {
       expect(calledUrl).toContain("offset=5");
     });
 
+    it("should forward status query parameter", async () => {
+      mockedAxios.get.mockResolvedValueOnce({
+        data: { events: [], total: 0, limit: 50, offset: 0 },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {} as never,
+      });
+      await request(app).get("/api/events?status=process_failed");
+      const calledUrl = mockedAxios.get.mock.calls[mockedAxios.get.mock.calls.length - 1][0];
+      expect(calledUrl).toContain("status=process_failed");
+    });
+
     it("should return 502 when gateway is unreachable", async () => {
       mockedAxios.get.mockRejectedValueOnce(new Error("ECONNREFUSED"));
       const res = await request(app).get("/api/events");
