@@ -22,6 +22,8 @@ MAX_EVENTS = int(os.environ.get("MAX_EVENTS", "10000"))
 MAX_PAYLOAD_SIZE = int(os.environ.get("MAX_PAYLOAD_SIZE", str(1024 * 1024)))
 DEFAULT_PAGE_LIMIT = int(os.environ.get("DEFAULT_PAGE_LIMIT", "50"))
 
+ALLOWED_STATUSES = {"received", "processed", "process_failed", "process_error"}
+
 events_store: list[dict] = []
 
 
@@ -107,8 +109,16 @@ def create_event():
 @app.route("/api/events", methods=["GET"])
 def list_events():
     event_type = request.args.get("type")
+    status = request.args.get("status")
     limit = request.args.get("limit", DEFAULT_PAGE_LIMIT, type=int)
     offset = request.args.get("offset", 0, type=int)
+
+    if status is not None and status not in ALLOWED_STATUSES:
+        logger.warning("Invalid status filter: %s", status)
+        return jsonify({
+            "error": "Invalid status",
+            "allowed": sorted(ALLOWED_STATUSES),
+        }), 400
 
     if limit < 0:
         limit = DEFAULT_PAGE_LIMIT
@@ -117,7 +127,9 @@ def list_events():
 
     filtered = events_store
     if event_type:
-        filtered = [e for e in events_store if e["type"] == event_type]
+        filtered = [e for e in filtered if e["type"] == event_type]
+    if status:
+        filtered = [e for e in filtered if e.get("status") == status]
 
     total = len(filtered)
     paginated = filtered[offset:offset + limit]
