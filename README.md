@@ -83,7 +83,7 @@ npm start
 |--------|----------|-------------|
 | GET | `/health` | Health check |
 | POST | `/api/events` | Create a new event |
-| GET | `/api/events` | List events (optional `?type=`, `?status=`, `?limit=`, `?offset=` filters) |
+| GET | `/api/events` | List events (optional `?type=`, `?status=`, `?since=`, `?until=`, `?limit=`, `?offset=` filters) |
 | GET | `/api/events/:id` | Get event by ID |
 | GET | `/api/stats` | Get aggregated statistics |
 
@@ -124,7 +124,12 @@ curl "http://localhost:8080/api/events?status=process_failed"
 
 # Combine type + status filters
 curl "http://localhost:8080/api/events?type=user.signup&status=processed"
+
+# Filter by time range (Unix timestamp seconds)
+curl "http://localhost:8080/api/events?since=1700000000&until=1700100000"
 ```
+
+> **Note**: `limit` is automatically clamped to `MAX_PAGE_LIMIT` (default 500). Invalid `since` / `until` (non-numeric, negative, or `until < since`) return `400`.
 
 ### Processor (port 8081)
 
@@ -182,6 +187,10 @@ All services are configured via environment variables. See [`.env.example`](.env
 | `LOG_LEVEL` | `INFO` | Log verbosity (DEBUG, INFO, WARNING, ERROR) |
 | `PROCESSOR_MAX_EVENTS` | `10000` | Max processed events kept in memory (processor) |
 | `PROCESSED_DEFAULT_LIMIT` | `50` | Default `limit` for `GET /processed` (processor) |
+| `MAX_EVENTS` | `10000` | Max events kept in memory (gateway) |
+| `MAX_PAYLOAD_SIZE` | `1048576` | Max request body size in bytes (gateway) |
+| `DEFAULT_PAGE_LIMIT` | `50` | Default `limit` for `GET /api/events` (gateway) |
+| `MAX_PAGE_LIMIT` | `500` | Upper bound for `limit` on `GET /api/events` (gateway) |
 
 ## Testing
 

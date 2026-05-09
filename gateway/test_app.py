@@ -370,6 +370,102 @@ def test_payload_within_limit(client, monkeypatch):
     assert resp.status_code == 201
 
 
+def test_list_events_filter_since(client):
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "ts.test"}),
+        content_type="application/json",
+    )
+    # All events should be present when since is in the past
+    resp = client.get("/api/events?since=0")
+    assert resp.status_code == 200
+    assert resp.get_json()["total"] == 1
+
+    # since far in the future returns nothing
+    resp = client.get("/api/events?since=99999999999")
+    assert resp.status_code == 200
+    assert resp.get_json()["total"] == 0
+
+
+def test_list_events_filter_until(client):
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "ts.test"}),
+        content_type="application/json",
+    )
+    # until far in the future includes everything
+    resp = client.get("/api/events?until=99999999999")
+    assert resp.status_code == 200
+    assert resp.get_json()["total"] == 1
+
+    # until in the past excludes everything
+    resp = client.get("/api/events?until=0")
+    assert resp.status_code == 200
+    assert resp.get_json()["total"] == 0
+
+
+def test_list_events_filter_since_and_until_combined(client):
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "ts.combo"}),
+        content_type="application/json",
+    )
+    resp = client.get("/api/events?since=0&until=99999999999")
+    assert resp.status_code == 200
+    assert resp.get_json()["total"] == 1
+
+
+def test_list_events_invalid_since(client):
+    resp = client.get("/api/events?since=notanumber")
+    assert resp.status_code == 400
+    assert "since" in resp.get_json()["error"]
+
+
+def test_list_events_negative_since(client):
+    resp = client.get("/api/events?since=-1")
+    assert resp.status_code == 400
+
+
+def test_list_events_invalid_until(client):
+    resp = client.get("/api/events?until=abc")
+    assert resp.status_code == 400
+    assert "until" in resp.get_json()["error"]
+
+
+def test_list_events_until_before_since(client):
+    resp = client.get("/api/events?since=100&until=50")
+    assert resp.status_code == 400
+    assert "until" in resp.get_json()["error"].lower()
+
+
+def test_list_events_limit_capped_at_max(client, monkeypatch):
+    monkeypatch.setattr("app.MAX_PAGE_LIMIT", 5)
+    for i in range(10):
+        client.post(
+            "/api/events",
+            data=json.dumps({"type": f"cap.{i}"}),
+            content_type="application/json",
+        )
+    resp = client.get("/api/events?limit=100")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["limit"] == 5
+    assert len(data["events"]) == 5
+    assert data["total"] == 10
+
+
+def test_list_events_limit_under_max_unaffected(client, monkeypatch):
+    monkeypatch.setattr("app.MAX_PAGE_LIMIT", 100)
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "norm"}),
+        content_type="application/json",
+    )
+    resp = client.get("/api/events?limit=10")
+    assert resp.status_code == 200
+    assert resp.get_json()["limit"] == 10
+
+
 def test_request_id_generated(client):
     resp = client.get("/health")
     assert resp.status_code == 200
