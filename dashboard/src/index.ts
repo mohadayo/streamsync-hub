@@ -9,6 +9,11 @@ app.use(express.json());
 const GATEWAY_URL = process.env.GATEWAY_URL || "http://localhost:8080";
 const PORT = parseInt(process.env.DASHBOARD_PORT || "3000", 10);
 const LOG_LEVEL = process.env.LOG_LEVEL || "info";
+const TIMELINE_FETCH_LIMIT = parseInt(
+  process.env.TIMELINE_FETCH_LIMIT || "1000",
+  10
+);
+const ALLOWED_BUCKETS = new Set(["hour", "day"]);
 
 function log(level: string, message: string): void {
   if (level === "debug" && LOG_LEVEL !== "debug") return;
@@ -69,24 +74,53 @@ app.get("/api/events", async (req: Request, res: Response) => {
   }
 });
 
-app.get("/api/timeline", async (_req: Request, res: Response) => {
-  try {
-    const resp = await axios.get(`${GATEWAY_URL}/api/events`, {
-      timeout: 5000,
+function bucketKey(date: Date, bucket: string): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  if (bucket === "day") {
+    return `${y}-${m}-${d}`;
+  }
+  const h = String(date.getHours()).padStart(2, "0");
+  return `${y}-${m}-${d} ${h}:00`;
+}
+
+app.get("/api/timeline", async (req: Request, res: Response) => {
+  const bucket = req.query.bucket ? String(req.query.bucket) : "hour";
+  if (!ALLOWED_BUCKETS.has(bucket)) {
+    res.status(400).json({
+      error: "Invalid bucket",
+      allowed: Array.from(ALLOWED_BUCKETS).sort(),
     });
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams();
+    if (req.query.type) params.set("type", String(req.query.type));
+    if (req.query.status) params.set("status", String(req.query.status));
+    if (req.query.since) params.set("since", String(req.query.since));
+    if (req.query.until) params.set("until", String(req.query.until));
+    params.set("limit", String(TIMELINE_FETCH_LIMIT));
+    const url = `${GATEWAY_URL}/api/events?${params.toString()}`;
+    const resp = await axios.get(url, { timeout: 5000 });
     const events: Array<{ timestamp: number; type: string; status: string }> =
-      resp.data.events;
+      resp.data.events || [];
 
     const buckets: Record<string, number> = {};
     for (const event of events) {
       const date = new Date(event.timestamp * 1000);
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:00`;
+      const key = bucketKey(date, bucket);
       buckets[key] = (buckets[key] || 0) + 1;
     }
 
     const timeline = Object.entries(buckets)
-      .map(([hour, count]) => ({ hour, count }))
-      .sort((a, b) => a.hour.localeCompare(b.hour));
+      .map(([slot, count]) => ({ [bucket]: slot, count }))
+      .sort((a, b) =>
+        String(a[bucket as keyof typeof a]).localeCompare(
+          String(b[bucket as keyof typeof b])
+        )
+      );
 
     res.json(timeline);
   } catch (err) {

@@ -131,6 +131,72 @@ describe("Dashboard Service", () => {
       expect(res.body[0].count).toBe(2);
     });
 
+    it("should pass a high limit to gateway when fetching events", async () => {
+      mockedAxios.get.mockResolvedValueOnce({
+        data: { events: [], total: 0, limit: 1000, offset: 0 },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {} as never,
+      });
+      await request(app).get("/api/timeline");
+      const calledUrl = mockedAxios.get.mock.calls[mockedAxios.get.mock.calls.length - 1][0];
+      expect(calledUrl).toContain("limit=1000");
+    });
+
+    it("should forward type/status/since/until filters to gateway", async () => {
+      mockedAxios.get.mockResolvedValueOnce({
+        data: { events: [], total: 0, limit: 1000, offset: 0 },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {} as never,
+      });
+      await request(app).get(
+        "/api/timeline?type=user.signup&status=processed&since=1700000000&until=1800000000"
+      );
+      const calledUrl = mockedAxios.get.mock.calls[mockedAxios.get.mock.calls.length - 1][0];
+      expect(calledUrl).toContain("type=user.signup");
+      expect(calledUrl).toContain("status=processed");
+      expect(calledUrl).toContain("since=1700000000");
+      expect(calledUrl).toContain("until=1800000000");
+    });
+
+    it("should aggregate by day when bucket=day", async () => {
+      const t1 = new Date(2026, 0, 1, 3, 30).getTime() / 1000;
+      const t2 = new Date(2026, 0, 1, 18, 45).getTime() / 1000;
+      const t3 = new Date(2026, 0, 2, 10, 0).getTime() / 1000;
+      mockedAxios.get.mockResolvedValueOnce({
+        data: {
+          events: [
+            { timestamp: t1, type: "x", status: "received" },
+            { timestamp: t2, type: "x", status: "received" },
+            { timestamp: t3, type: "x", status: "received" },
+          ],
+          total: 3,
+          limit: 1000,
+          offset: 0,
+        },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {} as never,
+      });
+      const res = await request(app).get("/api/timeline?bucket=day");
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(2);
+      expect(res.body[0]).toHaveProperty("day");
+      expect(res.body[0].count).toBe(2);
+      expect(res.body[1].count).toBe(1);
+    });
+
+    it("should reject invalid bucket values", async () => {
+      const res = await request(app).get("/api/timeline?bucket=week");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid bucket");
+      expect(res.body.allowed).toEqual(["day", "hour"]);
+    });
+
     it("should return 502 when gateway is unreachable", async () => {
       mockedAxios.get.mockRejectedValueOnce(new Error("ECONNREFUSED"));
       const res = await request(app).get("/api/timeline");
