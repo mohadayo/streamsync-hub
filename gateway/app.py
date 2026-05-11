@@ -198,13 +198,49 @@ def delete_event(event_id):
 
 @app.route("/api/stats", methods=["GET"])
 def stats():
-    total = len(events_store)
-    by_status = {}
-    by_type = {}
-    for e in events_store:
+    event_type = request.args.get("type")
+    status = request.args.get("status")
+    since_raw = request.args.get("since")
+    until_raw = request.args.get("until")
+
+    if status is not None and status not in ALLOWED_STATUSES:
+        logger.warning("Invalid status filter on stats: %s", status)
+        return jsonify({
+            "error": "Invalid status",
+            "allowed": sorted(ALLOWED_STATUSES),
+        }), 400
+
+    since = None
+    until = None
+    try:
+        if since_raw is not None:
+            since = _parse_timestamp_arg(since_raw, "since")
+        if until_raw is not None:
+            until = _parse_timestamp_arg(until_raw, "until")
+    except ValueError as e:
+        logger.warning("Invalid timestamp filter on stats: %s", e)
+        return jsonify({"error": str(e)}), 400
+
+    if since is not None and until is not None and until < since:
+        logger.warning("Invalid range on stats: until=%s < since=%s", until, since)
+        return jsonify({"error": "'until' must be greater than or equal to 'since'"}), 400
+
+    filtered = events_store
+    if event_type:
+        filtered = [e for e in filtered if e["type"] == event_type]
+    if status:
+        filtered = [e for e in filtered if e.get("status") == status]
+    if since is not None:
+        filtered = [e for e in filtered if e.get("timestamp", 0) >= since]
+    if until is not None:
+        filtered = [e for e in filtered if e.get("timestamp", 0) <= until]
+
+    by_status: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    for e in filtered:
         by_status[e["status"]] = by_status.get(e["status"], 0) + 1
         by_type[e["type"]] = by_type.get(e["type"], 0) + 1
-    return jsonify({"total": total, "by_status": by_status, "by_type": by_type})
+    return jsonify({"total": len(filtered), "by_status": by_status, "by_type": by_type})
 
 
 def create_app():
