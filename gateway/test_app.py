@@ -330,6 +330,73 @@ def test_stats_with_events(client):
     assert data["by_type"]["stat.test"] == 2
 
 
+def test_stats_filter_by_type(client):
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "stat.a"}),
+        content_type="application/json",
+    )
+    client.post(
+        "/api/events",
+        data=json.dumps({"type": "stat.b"}),
+        content_type="application/json",
+    )
+    resp = client.get("/api/stats?type=stat.a")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 1
+    assert data["by_type"] == {"stat.a": 1}
+
+
+def test_stats_filter_by_status(client):
+    events_store.append({
+        "id": "1", "type": "x", "payload": {}, "timestamp": 100.0, "status": "received",
+    })
+    events_store.append({
+        "id": "2", "type": "x", "payload": {}, "timestamp": 200.0, "status": "processed",
+    })
+    resp = client.get("/api/stats?status=processed")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 1
+    assert data["by_status"] == {"processed": 1}
+
+
+def test_stats_filter_by_time_range(client):
+    events_store.append({
+        "id": "1", "type": "x", "payload": {}, "timestamp": 100.0, "status": "received",
+    })
+    events_store.append({
+        "id": "2", "type": "x", "payload": {}, "timestamp": 200.0, "status": "received",
+    })
+    events_store.append({
+        "id": "3", "type": "x", "payload": {}, "timestamp": 300.0, "status": "received",
+    })
+    resp = client.get("/api/stats?since=150&until=250")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 1
+
+
+def test_stats_invalid_status(client):
+    resp = client.get("/api/stats?status=bogus")
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "allowed" in data
+
+
+def test_stats_invalid_since(client):
+    resp = client.get("/api/stats?since=notanumber")
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "since" in data["error"]
+
+
+def test_stats_until_before_since(client):
+    resp = client.get("/api/stats?since=200&until=100")
+    assert resp.status_code == 400
+
+
 def test_events_store_max_capacity(client, monkeypatch):
     monkeypatch.setattr("app.MAX_EVENTS", 3)
     for i in range(5):
