@@ -40,6 +40,56 @@ describe("Dashboard Service", () => {
     });
   });
 
+  describe("GET /api/stats", () => {
+    it("should proxy stats from gateway", async () => {
+      mockedAxios.get.mockResolvedValueOnce({
+        data: { total: 3, by_status: { received: 3 }, by_type: { x: 3 } },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {} as never,
+      });
+      const res = await request(app).get("/api/stats");
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(3);
+      expect(res.body.by_type).toEqual({ x: 3 });
+    });
+
+    it("should forward type/status/since/until filters to gateway", async () => {
+      mockedAxios.get.mockResolvedValueOnce({
+        data: { total: 0, by_status: {}, by_type: {} },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {} as never,
+      });
+      await request(app).get(
+        "/api/stats?type=user.signup&status=processed&since=100&until=200"
+      );
+      const calledUrl = mockedAxios.get.mock.calls[mockedAxios.get.mock.calls.length - 1][0];
+      expect(calledUrl).toContain("type=user.signup");
+      expect(calledUrl).toContain("status=processed");
+      expect(calledUrl).toContain("since=100");
+      expect(calledUrl).toContain("until=200");
+    });
+
+    it("should propagate 4xx errors from gateway", async () => {
+      mockedAxios.get.mockRejectedValueOnce({
+        response: { status: 400, data: { error: "Invalid status" } },
+      });
+      const res = await request(app).get("/api/stats?status=bogus");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid status");
+    });
+
+    it("should return 502 when gateway is unreachable", async () => {
+      mockedAxios.get.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+      const res = await request(app).get("/api/stats");
+      expect(res.status).toBe(502);
+      expect(res.body.error).toBeDefined();
+    });
+  });
+
   describe("GET /api/events", () => {
     it("should proxy events from gateway", async () => {
       mockedAxios.get.mockResolvedValueOnce({
