@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -461,6 +462,48 @@ func TestHealthHandler_MethodNotAllowed(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestProcessHandler_BodyTooLarge(t *testing.T) {
+	resetProcessedEvents()
+	oldMax := maxBodySize
+	maxBodySize = 64
+	defer func() { maxBodySize = oldMax }()
+
+	bigPayload := make(map[string]string, 1)
+	bigPayload["k"] = strings.Repeat("a", 256)
+	body, _ := json.Marshal(Event{
+		ID:      "big-1",
+		Type:    "test.big",
+		Payload: map[string]interface{}{"k": bigPayload["k"]},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/process", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	processHandler(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "request body too large") {
+		t.Errorf("expected error message in body, got %s", w.Body.String())
+	}
+}
+
+func TestProcessHandler_BodyWithinLimit(t *testing.T) {
+	resetProcessedEvents()
+	oldMax := maxBodySize
+	maxBodySize = 1024
+	defer func() { maxBodySize = oldMax }()
+
+	body, _ := json.Marshal(Event{ID: "ok-1", Type: "test.ok"})
+	req := httptest.NewRequest(http.MethodPost, "/process", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	processHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }
 
