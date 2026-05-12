@@ -560,3 +560,58 @@ def test_request_id_on_error_response(client):
     resp = client.get("/api/events/nonexistent-id")
     assert resp.status_code == 404
     assert resp.headers.get("X-Request-ID") is not None
+
+
+def test_create_event_rejects_blank_type(client):
+    resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": "   ", "payload": {}}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "type" in data["error"].lower()
+
+
+def test_create_event_rejects_empty_type(client):
+    resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": "", "payload": {}}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+
+
+def test_create_event_rejects_non_string_type(client):
+    resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": 123, "payload": {}}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "string" in data["error"].lower()
+
+
+def test_create_event_rejects_overlong_type(client, monkeypatch):
+    import app as app_module
+    monkeypatch.setattr(app_module, "MAX_TYPE_LENGTH", 10)
+    resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": "a" * 50, "payload": {}}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert data.get("max_length") == 10
+
+
+def test_create_event_trims_surrounding_whitespace(client):
+    resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": "  user.signup  "}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert data["type"] == "user.signup"
