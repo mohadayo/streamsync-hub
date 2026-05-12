@@ -190,6 +190,7 @@ All services are configured via environment variables. See [`.env.example`](.env
 | `MAX_BODY_SIZE` | `1048576` | Max request body size in bytes for `POST /process` (processor) |
 | `MAX_EVENTS` | `10000` | Max events kept in memory (gateway) |
 | `MAX_PAYLOAD_SIZE` | `1048576` | Max request body size in bytes (gateway) |
+| `MAX_TYPE_LENGTH` | `256` | Max length of event `type` field on `POST /api/events` (gateway) |
 | `DEFAULT_PAGE_LIMIT` | `50` | Default `limit` for `GET /api/events` (gateway) |
 | `MAX_PAGE_LIMIT` | `500` | Upper bound for `limit` on `GET /api/events` (gateway) |
 
