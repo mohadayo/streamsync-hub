@@ -187,6 +187,7 @@ All services are configured via environment variables. See [`.env.example`](.env
 | `LOG_LEVEL` | `INFO` | Log verbosity (DEBUG, INFO, WARNING, ERROR) |
 | `PROCESSOR_MAX_EVENTS` | `10000` | Max processed events kept in memory (processor) |
 | `PROCESSED_DEFAULT_LIMIT` | `50` | Default `limit` for `GET /processed` (processor) |
+| `MAX_BODY_SIZE` | `1048576` | Max request body size in bytes for `POST /process` (processor) |
 | `MAX_EVENTS` | `10000` | Max events kept in memory (gateway) |
 | `MAX_PAYLOAD_SIZE` | `1048576` | Max request body size in bytes (gateway) |
 | `DEFAULT_PAGE_LIMIT` | `50` | Default `limit` for `GET /api/events` (gateway) |
