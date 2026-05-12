@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -43,12 +44,15 @@ var (
 	logger                *log.Logger
 	maxProcessed          int
 	processedDefaultLimit int
+	maxBodySize           int64
 	shutdownTimeout       time.Duration
 	readHeaderTimeout     time.Duration
 	readTimeout           time.Duration
 	writeTimeout          time.Duration
 	idleTimeout           time.Duration
 )
+
+const defaultMaxBodySize int64 = 1 << 20 // 1 MiB
 
 var allowedPriorities = map[string]bool{"high": true, "medium": true, "low": true}
 
@@ -73,6 +77,12 @@ func init() {
 	if v := os.Getenv("PROCESSED_DEFAULT_LIMIT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			processedDefaultLimit = n
+		}
+	}
+	maxBodySize = defaultMaxBodySize
+	if v := os.Getenv("MAX_BODY_SIZE"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			maxBodySize = n
 		}
 	}
 	shutdownTimeout = envSeconds("SHUTDOWN_TIMEOUT_SECONDS", 30*time.Second)
@@ -130,8 +140,20 @@ func processHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+
 	var event Event
 	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			logger.Printf("Request body too large: limit=%d bytes", maxErr.Limit)
+			http.Error(
+				w,
+				fmt.Sprintf(`{"error":"request body too large","max_bytes":%d}`, maxErr.Limit),
+				http.StatusRequestEntityTooLarge,
+			)
+			return
+		}
 		logger.Printf("Failed to decode event: %v", err)
 		http.Error(w, fmt.Sprintf(`{"error":"invalid JSON: %s"}`, err.Error()), http.StatusBadRequest)
 		return
