@@ -20,6 +20,7 @@ PROCESSOR_URL = os.environ.get("PROCESSOR_URL", "http://localhost:8081")
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3000")
 MAX_EVENTS = int(os.environ.get("MAX_EVENTS", "10000"))
 MAX_PAYLOAD_SIZE = int(os.environ.get("MAX_PAYLOAD_SIZE", str(1024 * 1024)))
+MAX_TYPE_LENGTH = int(os.environ.get("MAX_TYPE_LENGTH", "256"))
 DEFAULT_PAGE_LIMIT = int(os.environ.get("DEFAULT_PAGE_LIMIT", "50"))
 MAX_PAGE_LIMIT = int(os.environ.get("MAX_PAGE_LIMIT", "500"))
 
@@ -70,9 +71,26 @@ def create_event():
         logger.warning("Event missing 'type' field")
         return jsonify({"error": "Field 'type' is required"}), 400
 
+    raw_type = data["type"]
+    if not isinstance(raw_type, str):
+        logger.warning("Event 'type' is not a string: %r", type(raw_type).__name__)
+        return jsonify({"error": "Field 'type' must be a string"}), 400
+
+    event_type = raw_type.strip()
+    if not event_type:
+        logger.warning("Event 'type' is blank or whitespace only")
+        return jsonify({"error": "Field 'type' must not be blank"}), 400
+
+    if len(event_type) > MAX_TYPE_LENGTH:
+        logger.warning("Event 'type' exceeds max length: %d > %d", len(event_type), MAX_TYPE_LENGTH)
+        return jsonify({
+            "error": "Field 'type' is too long",
+            "max_length": MAX_TYPE_LENGTH,
+        }), 400
+
     event = {
         "id": str(uuid.uuid4()),
-        "type": data["type"],
+        "type": event_type,
         "payload": data.get("payload", {}),
         "timestamp": time.time(),
         "status": "received",
