@@ -1,5 +1,6 @@
 import os
 import logging
+import threading
 import time
 import uuid
 
@@ -25,8 +26,11 @@ DEFAULT_PAGE_LIMIT = int(os.environ.get("DEFAULT_PAGE_LIMIT", "50"))
 MAX_PAGE_LIMIT = int(os.environ.get("MAX_PAGE_LIMIT", "500"))
 
 ALLOWED_STATUSES = {"received", "processed", "process_failed", "process_error"}
+ALLOWED_SORT_FIELDS = {"timestamp", "type", "status"}
+ALLOWED_SORT_ORDERS = {"asc", "desc"}
 
 events_store: list[dict] = []
+events_lock = threading.Lock()
 
 
 @app.before_request
@@ -95,12 +99,12 @@ def create_event():
         "timestamp": time.time(),
         "status": "received",
     }
-    events_store.append(event)
-
-    if len(events_store) > MAX_EVENTS:
-        removed = len(events_store) - MAX_EVENTS
-        del events_store[:removed]
-        logger.info("Evicted %d old events (store capped at %d)", removed, MAX_EVENTS)
+    with events_lock:
+        events_store.append(event)
+        if len(events_store) > MAX_EVENTS:
+            removed = len(events_store) - MAX_EVENTS
+            del events_store[:removed]
+            logger.info("Evicted %d old events (store capped at %d)", removed, MAX_EVENTS)
 
     logger.info("Event created: id=%s type=%s", event["id"], event["type"])
 
@@ -143,12 +147,28 @@ def list_events():
     offset = request.args.get("offset", 0, type=int)
     since_raw = request.args.get("since")
     until_raw = request.args.get("until")
+    sort_field = request.args.get("sort", "timestamp")
+    sort_order = request.args.get("order", "asc")
 
     if status is not None and status not in ALLOWED_STATUSES:
         logger.warning("Invalid status filter: %s", status)
         return jsonify({
             "error": "Invalid status",
             "allowed": sorted(ALLOWED_STATUSES),
+        }), 400
+
+    if sort_field not in ALLOWED_SORT_FIELDS:
+        logger.warning("Invalid sort field: %s", sort_field)
+        return jsonify({
+            "error": "Invalid sort field",
+            "allowed": sorted(ALLOWED_SORT_FIELDS),
+        }), 400
+
+    if sort_order not in ALLOWED_SORT_ORDERS:
+        logger.warning("Invalid sort order: %s", sort_order)
+        return jsonify({
+            "error": "Invalid sort order",
+            "allowed": sorted(ALLOWED_SORT_ORDERS),
         }), 400
 
     since = None
@@ -173,7 +193,9 @@ def list_events():
     if offset < 0:
         offset = 0
 
-    filtered = events_store
+    with events_lock:
+        filtered = list(events_store)
+
     if event_type:
         filtered = [e for e in filtered if e["type"] == event_type]
     if status:
@@ -183,6 +205,9 @@ def list_events():
     if until is not None:
         filtered = [e for e in filtered if e.get("timestamp", 0) <= until]
 
+    reverse = sort_order == "desc"
+    filtered.sort(key=lambda e: e.get(sort_field, ""), reverse=reverse)
+
     total = len(filtered)
     paginated = filtered[offset:offset + limit]
 
@@ -191,25 +216,29 @@ def list_events():
         "total": total,
         "limit": limit,
         "offset": offset,
+        "sort": sort_field,
+        "order": sort_order,
     })
 
 
 @app.route("/api/events/<event_id>", methods=["GET"])
 def get_event(event_id):
-    for event in events_store:
-        if event["id"] == event_id:
-            return jsonify(event)
+    with events_lock:
+        for event in events_store:
+            if event["id"] == event_id:
+                return jsonify(event)
     logger.warning("Event not found: %s", event_id)
     return jsonify({"error": "Event not found"}), 404
 
 
 @app.route("/api/events/<event_id>", methods=["DELETE"])
 def delete_event(event_id):
-    for i, event in enumerate(events_store):
-        if event["id"] == event_id:
-            deleted = events_store.pop(i)
-            logger.info("Event deleted: id=%s type=%s", deleted["id"], deleted["type"])
-            return jsonify({"message": "Event deleted", "event": deleted})
+    with events_lock:
+        for i, event in enumerate(events_store):
+            if event["id"] == event_id:
+                deleted = events_store.pop(i)
+                logger.info("Event deleted: id=%s type=%s", deleted["id"], deleted["type"])
+                return jsonify({"message": "Event deleted", "event": deleted})
     logger.warning("Event not found for deletion: %s", event_id)
     return jsonify({"error": "Event not found"}), 404
 
@@ -243,7 +272,8 @@ def stats():
         logger.warning("Invalid range on stats: until=%s < since=%s", until, since)
         return jsonify({"error": "'until' must be greater than or equal to 'since'"}), 400
 
-    filtered = events_store
+    with events_lock:
+        filtered = list(events_store)
     if event_type:
         filtered = [e for e in filtered if e["type"] == event_type]
     if status:

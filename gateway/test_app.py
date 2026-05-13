@@ -615,3 +615,96 @@ def test_create_event_trims_surrounding_whitespace(client):
     assert resp.status_code == 201
     data = resp.get_json()
     assert data["type"] == "user.signup"
+
+
+def test_list_events_sort_default_is_timestamp_asc(client):
+    events_store.append({
+        "id": "a", "type": "x", "payload": {}, "timestamp": 300.0, "status": "received",
+    })
+    events_store.append({
+        "id": "b", "type": "x", "payload": {}, "timestamp": 100.0, "status": "received",
+    })
+    events_store.append({
+        "id": "c", "type": "x", "payload": {}, "timestamp": 200.0, "status": "received",
+    })
+    resp = client.get("/api/events")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert [e["id"] for e in data["events"]] == ["b", "c", "a"]
+    assert data["sort"] == "timestamp"
+    assert data["order"] == "asc"
+
+
+def test_list_events_sort_timestamp_desc(client):
+    events_store.append({
+        "id": "a", "type": "x", "payload": {}, "timestamp": 100.0, "status": "received",
+    })
+    events_store.append({
+        "id": "b", "type": "x", "payload": {}, "timestamp": 300.0, "status": "received",
+    })
+    events_store.append({
+        "id": "c", "type": "x", "payload": {}, "timestamp": 200.0, "status": "received",
+    })
+    resp = client.get("/api/events?order=desc")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert [e["id"] for e in data["events"]] == ["b", "c", "a"]
+
+
+def test_list_events_sort_by_type(client):
+    events_store.append({
+        "id": "1", "type": "zebra", "payload": {}, "timestamp": 1.0, "status": "received",
+    })
+    events_store.append({
+        "id": "2", "type": "apple", "payload": {}, "timestamp": 2.0, "status": "received",
+    })
+    resp = client.get("/api/events?sort=type")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert [e["type"] for e in data["events"]] == ["apple", "zebra"]
+
+
+def test_list_events_invalid_sort_field(client):
+    resp = client.get("/api/events?sort=bogus")
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "allowed" in data
+
+
+def test_list_events_invalid_sort_order(client):
+    resp = client.get("/api/events?order=sideways")
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "allowed" in data
+
+
+def test_events_store_lock_is_threadlock():
+    from app import events_lock
+    import threading as _threading
+    assert isinstance(events_lock, type(_threading.Lock()))
+
+
+def test_events_store_concurrent_appends_no_loss():
+    from app import events_store as store, events_lock
+    import threading as _threading
+
+    store.clear()
+
+    def writer(prefix):
+        for i in range(50):
+            with events_lock:
+                store.append({
+                    "id": f"{prefix}-{i}",
+                    "type": prefix,
+                    "payload": {},
+                    "timestamp": float(i),
+                    "status": "received",
+                })
+
+    threads = [_threading.Thread(target=writer, args=(f"t{i}",)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(store) == 5 * 50
