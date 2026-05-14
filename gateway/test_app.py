@@ -1,14 +1,16 @@
 import json
 import uuid
 import pytest
-from app import app, events_store
+from app import app, events_store, events_index
 
 
 @pytest.fixture(autouse=True)
 def clear_events():
     events_store.clear()
+    events_index.clear()
     yield
     events_store.clear()
+    events_index.clear()
 
 
 @pytest.fixture
@@ -708,3 +710,55 @@ def test_events_store_concurrent_appends_no_loss():
         t.join()
 
     assert len(store) == 5 * 50
+
+
+def test_events_index_indexes_created_events(client):
+    create_resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": "idx.create"}),
+        content_type="application/json",
+    )
+    event_id = create_resp.get_json()["id"]
+    assert event_id in events_index
+    assert events_index[event_id]["type"] == "idx.create"
+
+
+def test_events_index_removed_on_delete(client):
+    create_resp = client.post(
+        "/api/events",
+        data=json.dumps({"type": "idx.del"}),
+        content_type="application/json",
+    )
+    event_id = create_resp.get_json()["id"]
+    assert event_id in events_index
+
+    client.delete(f"/api/events/{event_id}")
+    assert event_id not in events_index
+
+
+def test_events_index_evicted_when_store_capacity_exceeded(client, monkeypatch):
+    monkeypatch.setattr("app.MAX_EVENTS", 3)
+    ids = []
+    for i in range(5):
+        resp = client.post(
+            "/api/events",
+            data=json.dumps({"type": f"cap.idx.{i}"}),
+            content_type="application/json",
+        )
+        ids.append(resp.get_json()["id"])
+    # Oldest two should be evicted from both store and index
+    assert ids[0] not in events_index
+    assert ids[1] not in events_index
+    assert ids[4] in events_index
+    assert len(events_index) == 3
+    assert len(events_store) == 3
+
+
+def test_events_index_size_matches_store(client):
+    for i in range(10):
+        client.post(
+            "/api/events",
+            data=json.dumps({"type": f"sync.{i}"}),
+            content_type="application/json",
+        )
+    assert len(events_index) == len(events_store)

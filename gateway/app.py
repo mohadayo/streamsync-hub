@@ -30,6 +30,7 @@ ALLOWED_SORT_FIELDS = {"timestamp", "type", "status"}
 ALLOWED_SORT_ORDERS = {"asc", "desc"}
 
 events_store: list[dict] = []
+events_index: dict[str, dict] = {}
 events_lock = threading.Lock()
 
 
@@ -101,9 +102,13 @@ def create_event():
     }
     with events_lock:
         events_store.append(event)
+        events_index[event["id"]] = event
         if len(events_store) > MAX_EVENTS:
             removed = len(events_store) - MAX_EVENTS
+            evicted = events_store[:removed]
             del events_store[:removed]
+            for e in evicted:
+                events_index.pop(e["id"], None)
             logger.info("Evicted %d old events (store capped at %d)", removed, MAX_EVENTS)
 
     logger.info("Event created: id=%s type=%s", event["id"], event["type"])
@@ -224,9 +229,9 @@ def list_events():
 @app.route("/api/events/<event_id>", methods=["GET"])
 def get_event(event_id):
     with events_lock:
-        for event in events_store:
-            if event["id"] == event_id:
-                return jsonify(event)
+        event = events_index.get(event_id)
+        if event is not None:
+            return jsonify(event)
     logger.warning("Event not found: %s", event_id)
     return jsonify({"error": "Event not found"}), 404
 
@@ -234,11 +239,14 @@ def get_event(event_id):
 @app.route("/api/events/<event_id>", methods=["DELETE"])
 def delete_event(event_id):
     with events_lock:
-        for i, event in enumerate(events_store):
-            if event["id"] == event_id:
-                deleted = events_store.pop(i)
-                logger.info("Event deleted: id=%s type=%s", deleted["id"], deleted["type"])
-                return jsonify({"message": "Event deleted", "event": deleted})
+        event = events_index.pop(event_id, None)
+        if event is not None:
+            try:
+                events_store.remove(event)
+            except ValueError:
+                pass
+            logger.info("Event deleted: id=%s type=%s", event["id"], event["type"])
+            return jsonify({"message": "Event deleted", "event": event})
     logger.warning("Event not found for deletion: %s", event_id)
     return jsonify({"error": "Event not found"}), 404
 
