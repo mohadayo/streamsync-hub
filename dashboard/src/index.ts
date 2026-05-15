@@ -87,12 +87,22 @@ app.get("/api/events", async (req: Request, res: Response) => {
     if (req.query.status) params.set("status", String(req.query.status));
     if (req.query.limit) params.set("limit", String(req.query.limit));
     if (req.query.offset) params.set("offset", String(req.query.offset));
+    if (req.query.since) params.set("since", String(req.query.since));
+    if (req.query.until) params.set("until", String(req.query.until));
+    if (req.query.sort) params.set("sort", String(req.query.sort));
+    if (req.query.order) params.set("order", String(req.query.order));
     const qs = params.toString();
     const url = qs ? `${GATEWAY_URL}/api/events?${qs}` : `${GATEWAY_URL}/api/events`;
     const resp = await axios.get(url, { timeout: 5000 });
     log("info", `Fetched events from gateway (total: ${resp.data.total})`);
     res.json(resp.data);
   } catch (err) {
+    const e = err as { response?: { status: number; data: unknown } };
+    if (e.response && e.response.status >= 400 && e.response.status < 500) {
+      log("warn", `Gateway rejected events request: ${e.response.status}`);
+      res.status(e.response.status).json(e.response.data);
+      return;
+    }
     log("error", `Failed to fetch events: ${err}`);
     res.status(502).json({ error: "Failed to fetch events from gateway" });
   }

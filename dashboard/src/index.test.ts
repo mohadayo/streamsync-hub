@@ -147,6 +147,43 @@ describe("Dashboard Service", () => {
       expect(calledUrl).toContain("status=process_failed");
     });
 
+    it("should forward since/until filters to gateway", async () => {
+      mockedAxios.get.mockResolvedValueOnce({
+        data: { events: [], total: 0, limit: 50, offset: 0 },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {} as never,
+      });
+      await request(app).get("/api/events?since=1700000000&until=1800000000");
+      const calledUrl = mockedAxios.get.mock.calls[mockedAxios.get.mock.calls.length - 1][0];
+      expect(calledUrl).toContain("since=1700000000");
+      expect(calledUrl).toContain("until=1800000000");
+    });
+
+    it("should forward sort and order parameters to gateway", async () => {
+      mockedAxios.get.mockResolvedValueOnce({
+        data: { events: [], total: 0, limit: 50, offset: 0, sort: "timestamp", order: "desc" },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: {} as never,
+      });
+      await request(app).get("/api/events?sort=type&order=desc");
+      const calledUrl = mockedAxios.get.mock.calls[mockedAxios.get.mock.calls.length - 1][0];
+      expect(calledUrl).toContain("sort=type");
+      expect(calledUrl).toContain("order=desc");
+    });
+
+    it("should propagate 4xx errors from gateway", async () => {
+      mockedAxios.get.mockRejectedValueOnce({
+        response: { status: 400, data: { error: "Invalid sort field" } },
+      });
+      const res = await request(app).get("/api/events?sort=bogus");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid sort field");
+    });
+
     it("should return 502 when gateway is unreachable", async () => {
       mockedAxios.get.mockRejectedValueOnce(new Error("ECONNREFUSED"));
       const res = await request(app).get("/api/events");
