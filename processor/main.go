@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,6 +57,16 @@ var (
 const defaultMaxBodySize int64 = 1 << 20 // 1 MiB
 
 var allowedPriorities = map[string]bool{"high": true, "medium": true, "low": true}
+
+var allowedProcessedSortFields = map[string]bool{
+	"processed_at": true,
+	"priority":     true,
+	"event_id":     true,
+}
+
+var allowedProcessedSortOrders = map[string]bool{"asc": true, "desc": true}
+
+var priorityRank = map[string]int{"low": 0, "medium": 1, "high": 2}
 
 func envSeconds(key string, fallback time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
@@ -225,11 +237,27 @@ func parsePositiveIntQuery(r *http.Request, key string, fallback int) int {
 	return n
 }
 
+func parseTimestampQuery(value string) (float64, error) {
+	v, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("must be a numeric Unix timestamp")
+	}
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, fmt.Errorf("must be a finite number")
+	}
+	if v < 0 {
+		return 0, fmt.Errorf("must be non-negative")
+	}
+	return v, nil
+}
+
 type processedResponse struct {
 	Results []ProcessResult `json:"results"`
 	Total   int             `json:"total"`
 	Limit   int             `json:"limit"`
 	Offset  int             `json:"offset"`
+	Sort    string          `json:"sort"`
+	Order   string          `json:"order"`
 }
 
 func processedHandler(w http.ResponseWriter, r *http.Request) {
@@ -237,26 +265,110 @@ func processedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	query := r.URL.Query()
 	limit := parsePositiveIntQuery(r, "limit", processedDefaultLimit)
 	offset := parsePositiveIntQuery(r, "offset", 0)
-	priority := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("priority")))
+	priority := strings.ToLower(strings.TrimSpace(query.Get("priority")))
 	if priority != "" && !allowedPriorities[priority] {
 		http.Error(w, `{"error":"priority must be one of: high, medium, low"}`, http.StatusBadRequest)
+		return
+	}
+
+	sortField := query.Get("sort")
+	if sortField == "" {
+		sortField = "processed_at"
+	}
+	if !allowedProcessedSortFields[sortField] {
+		http.Error(
+			w,
+			`{"error":"sort must be one of: event_id, priority, processed_at"}`,
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	sortOrder := query.Get("order")
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
+	if !allowedProcessedSortOrders[sortOrder] {
+		http.Error(w, `{"error":"order must be one of: asc, desc"}`, http.StatusBadRequest)
+		return
+	}
+
+	var since, until *float64
+	if raw := query.Get("since"); raw != "" {
+		v, err := parseTimestampQuery(raw)
+		if err != nil {
+			http.Error(
+				w,
+				fmt.Sprintf(`{"error":"query parameter 'since' %s"}`, err.Error()),
+				http.StatusBadRequest,
+			)
+			return
+		}
+		since = &v
+	}
+	if raw := query.Get("until"); raw != "" {
+		v, err := parseTimestampQuery(raw)
+		if err != nil {
+			http.Error(
+				w,
+				fmt.Sprintf(`{"error":"query parameter 'until' %s"}`, err.Error()),
+				http.StatusBadRequest,
+			)
+			return
+		}
+		until = &v
+	}
+	if since != nil && until != nil && *until < *since {
+		http.Error(
+			w,
+			`{"error":"query parameter 'until' must be greater than or equal to 'since'"}`,
+			http.StatusBadRequest,
+		)
 		return
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	filtered := processedEvents
-	if priority != "" {
-		filtered = make([]ProcessResult, 0, len(processedEvents))
-		for _, e := range processedEvents {
-			if e.Priority == priority {
-				filtered = append(filtered, e)
-			}
+	filtered := make([]ProcessResult, 0, len(processedEvents))
+	for _, e := range processedEvents {
+		if priority != "" && e.Priority != priority {
+			continue
 		}
+		if since != nil && e.ProcessedAt < *since {
+			continue
+		}
+		if until != nil && e.ProcessedAt > *until {
+			continue
+		}
+		filtered = append(filtered, e)
 	}
+
+	reverse := sortOrder == "desc"
+	sort.SliceStable(filtered, func(i, j int) bool {
+		a, b := filtered[i], filtered[j]
+		switch sortField {
+		case "processed_at":
+			if reverse {
+				return a.ProcessedAt > b.ProcessedAt
+			}
+			return a.ProcessedAt < b.ProcessedAt
+		case "priority":
+			if reverse {
+				return priorityRank[a.Priority] > priorityRank[b.Priority]
+			}
+			return priorityRank[a.Priority] < priorityRank[b.Priority]
+		case "event_id":
+			if reverse {
+				return a.EventID > b.EventID
+			}
+			return a.EventID < b.EventID
+		}
+		return false
+	})
 
 	total := len(filtered)
 	start := offset
@@ -279,6 +391,8 @@ func processedHandler(w http.ResponseWriter, r *http.Request) {
 		Total:   total,
 		Limit:   limit,
 		Offset:  offset,
+		Sort:    sortField,
+		Order:   sortOrder,
 	})
 }
 
