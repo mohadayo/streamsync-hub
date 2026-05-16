@@ -507,6 +507,159 @@ func TestProcessHandler_BodyWithinLimit(t *testing.T) {
 	}
 }
 
+func TestProcessedHandler_SinceUntilFilter(t *testing.T) {
+	resetProcessedEvents()
+
+	now := float64(time.Now().UnixMilli()) / 1000.0
+	mu.Lock()
+	processedEvents = []ProcessResult{
+		{EventID: "old", ProcessedAt: now - 100, Priority: "low", Tags: []string{"a"}},
+		{EventID: "mid", ProcessedAt: now - 50, Priority: "medium", Tags: []string{"b"}},
+		{EventID: "new", ProcessedAt: now, Priority: "high", Tags: []string{"c"}},
+	}
+	mu.Unlock()
+
+	url := fmt.Sprintf("/processed?since=%f&until=%f", now-60, now-10)
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	w := httptest.NewRecorder()
+	processedHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	var resp processedResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if resp.Total != 1 {
+		t.Fatalf("expected total 1, got %d", resp.Total)
+	}
+	if resp.Results[0].EventID != "mid" {
+		t.Fatalf("expected mid, got %s", resp.Results[0].EventID)
+	}
+}
+
+func TestProcessedHandler_InvalidSinceUntil(t *testing.T) {
+	resetProcessedEvents()
+
+	cases := []struct {
+		name string
+		q    string
+	}{
+		{"non-numeric since", "/processed?since=abc"},
+		{"non-numeric until", "/processed?until=xyz"},
+		{"negative since", "/processed?since=-1"},
+		{"until less than since", "/processed?since=100&until=50"},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, tc.q, nil)
+		w := httptest.NewRecorder()
+		processedHandler(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d (%s)", tc.name, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestProcessedHandler_SortByProcessedAtDesc(t *testing.T) {
+	resetProcessedEvents()
+
+	mu.Lock()
+	processedEvents = []ProcessResult{
+		{EventID: "a", ProcessedAt: 100.0, Priority: "low"},
+		{EventID: "b", ProcessedAt: 300.0, Priority: "low"},
+		{EventID: "c", ProcessedAt: 200.0, Priority: "low"},
+	}
+	mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/processed?sort=processed_at&order=desc", nil)
+	w := httptest.NewRecorder()
+	processedHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp processedResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Sort != "processed_at" || resp.Order != "desc" {
+		t.Errorf("expected sort=processed_at order=desc, got sort=%s order=%s", resp.Sort, resp.Order)
+	}
+	if resp.Results[0].EventID != "b" || resp.Results[1].EventID != "c" || resp.Results[2].EventID != "a" {
+		t.Errorf("unexpected order: %s, %s, %s",
+			resp.Results[0].EventID, resp.Results[1].EventID, resp.Results[2].EventID)
+	}
+}
+
+func TestProcessedHandler_SortByPriorityAsc(t *testing.T) {
+	resetProcessedEvents()
+
+	mu.Lock()
+	processedEvents = []ProcessResult{
+		{EventID: "h", ProcessedAt: 1.0, Priority: "high"},
+		{EventID: "l", ProcessedAt: 2.0, Priority: "low"},
+		{EventID: "m", ProcessedAt: 3.0, Priority: "medium"},
+	}
+	mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/processed?sort=priority&order=asc", nil)
+	w := httptest.NewRecorder()
+	processedHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp processedResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Results[0].Priority != "low" || resp.Results[1].Priority != "medium" || resp.Results[2].Priority != "high" {
+		t.Errorf("unexpected order: %s, %s, %s",
+			resp.Results[0].Priority, resp.Results[1].Priority, resp.Results[2].Priority)
+	}
+}
+
+func TestProcessedHandler_SortByEventIDDesc(t *testing.T) {
+	resetProcessedEvents()
+
+	mu.Lock()
+	processedEvents = []ProcessResult{
+		{EventID: "alpha", ProcessedAt: 1.0, Priority: "low"},
+		{EventID: "charlie", ProcessedAt: 2.0, Priority: "low"},
+		{EventID: "bravo", ProcessedAt: 3.0, Priority: "low"},
+	}
+	mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/processed?sort=event_id&order=desc", nil)
+	w := httptest.NewRecorder()
+	processedHandler(w, req)
+
+	var resp processedResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Results[0].EventID != "charlie" || resp.Results[2].EventID != "alpha" {
+		t.Errorf("unexpected order: %s, %s, %s",
+			resp.Results[0].EventID, resp.Results[1].EventID, resp.Results[2].EventID)
+	}
+}
+
+func TestProcessedHandler_InvalidSort(t *testing.T) {
+	resetProcessedEvents()
+	req := httptest.NewRequest(http.MethodGet, "/processed?sort=bogus", nil)
+	w := httptest.NewRecorder()
+	processedHandler(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestProcessedHandler_InvalidOrder(t *testing.T) {
+	resetProcessedEvents()
+	req := httptest.NewRequest(http.MethodGet, "/processed?order=sideways", nil)
+	w := httptest.NewRecorder()
+	processedHandler(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
 func TestEnvSeconds_OverrideAndFallback(t *testing.T) {
 	const key = "TEST_PROCESSOR_ENV_SECONDS"
 	os.Unsetenv(key)
